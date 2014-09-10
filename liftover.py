@@ -20,17 +20,18 @@ class liftover(BaseModel):
     length2 = IntegerField()
     flipped = BooleanField()
 
-# Remap Coordinates
 
+
+# Remap Coordinates
 def shift_pos(pos, mis_start1, mis_end1, length1, mis_start2, mis_end2, length2, shift_direction):
 	# Shift Right if beyond end position
 	if ((length1 > 0 and pos >= mis_end1) or
 		(length1 == 0 and pos > mis_end1)):
-		return pos + length2 - length1
+		return pos + ((length2 - length1) * shift_direction)
 	else:
 		return pos
 
-def remap_coords(organism, release1, release2, chromosome, start, end):
+def remap_coords(organism, release1, release2, chromosome, start, end = None):
 
 	# Determine direction
 	if (release1 > release2):
@@ -45,13 +46,37 @@ def remap_coords(organism, release1, release2, chromosome, start, end):
 
 	# Read Mapping Data
 	mapping_coords = liftover.select().where(liftover.build >= release1, liftover.build <= release2, liftover.chromosome==chromosome).order_by(liftover_direction).dicts()
-	print mapping_coords.sql()
 	for i in mapping_coords:
 		# If start or end lie beyond change region, apply shift.
 		start = shift_pos(start, i["mismatch_start1"], i["mismatch_end1"], i["length1"], i["mismatch_start2"], i["mismatch_end2"],  i["length2"], shift_direction)
 		end = shift_pos(end, i["mismatch_start1"], i["mismatch_end1"], i["length1"], i["mismatch_start2"], i["mismatch_end2"],  i["length2"], shift_direction)
 
-		print start, end, start - end, i["build"]
+		#print start, end, start - end, i["build"]
+	return start, end
+
+def debug():
+	import csv
+	test_gff = csv.DictReader(open("test/test_coords.txt"), delimiter="\t")
+	for k,v in enumerate(test_gff):
+		if k < 10:
+			#print k,v[0], v[1], v[5]
+
+			# Map Forward
+			start, end = remap_coords("C. elegans", 220, 235, v["old_chrom"], int(v["old_start"]), int(v["old_end"]))
+			if (int(v["new_start"]) != start):
+				print "Remap Start Fail - forward %s - %s" % (v["new_start"], start)
+			
+			# Map Backwards
+			start, end = remap_coords("C. elegans", 235, 220, v["old_chrom"], int(v["new_start"]), int(v["new_end"]))
+			if (int(v["old_start"]) != start):
+				print "Remap Start Fail - reverse %s - %s" % (v["new_start"], start)
+
+			#print "End remap failed: %s - %s" % (v["old_end"], end)
+
+			
+
+
+debug()
 
 remap_coords("C. elegans", 220, 235,"CHROMOSOME_IV", 9403845, 9403855)
 remap_coords("C. elegans", 220, 235,"CHROMOSOME_IV", 9403845, 9403855)
