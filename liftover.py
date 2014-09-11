@@ -23,11 +23,22 @@ class liftover(BaseModel):
 
 
 # Remap Coordinates
-def shift_pos(pos, mis_start1, mis_end1, length1, mis_start2, mis_end2, length2, shift_direction):
+def shift_pos(pos, pos_type, mis_start1, mis_end1, length1, mis_start2, mis_end2, length2, shift_direction):
 	# Shift Right if beyond end position
 	if ((length1 > 0 and pos >= mis_end1) or
 		(length1 == 0 and pos > mis_end1)):
 		return pos + ((length2 - length1) * shift_direction)
+	elif (pos >= mis_start1):
+	    # within a changed segment; if the position within the original segment
+	    # maps to beyond the end of the replacement segment, then this position no
+	    # longer exists, in which case we barf
+	    #print pos - mis_start1, length2
+	    if (pos - mis_start1 + 1 > length2): 
+	    	print "INVOKED"
+	    	#return pos + ((length2 - length1) * shift_direction)
+	    	return (mis_start2 + (length2*shift_direction))
+	    else:
+	    	return pos
 	else:
 		return pos
 
@@ -47,34 +58,46 @@ def remap_coords(organism, release1, release2, chromosome, start, end = None):
 	# Read Mapping Data
 	mapping_coords = liftover.select().where(liftover.build >= release1, liftover.build <= release2, liftover.chromosome==chromosome).order_by(liftover_direction).dicts()
 	for i in mapping_coords:
-		# If start or end lie beyond change region, apply shift.
-		start = shift_pos(start, i["mismatch_start1"], i["mismatch_end1"], i["length1"], i["mismatch_start2"], i["mismatch_end2"],  i["length2"], shift_direction)
-		end = shift_pos(end, i["mismatch_start1"], i["mismatch_end1"], i["length1"], i["mismatch_start2"], i["mismatch_end2"],  i["length2"], shift_direction)
+		
+		cur_length = end - start
+
+		start = shift_pos(start, "start", i["mismatch_start1"], i["mismatch_end1"], i["length1"], i["mismatch_start2"], i["mismatch_end2"],  i["length2"], shift_direction)
+		end = shift_pos(end, "end", i["mismatch_start1"], i["mismatch_end1"], i["length1"], i["mismatch_start2"], i["mismatch_end2"],  i["length2"], shift_direction)
+
+
+		indel = (cur_length,(end-start))
 
 		#print start, end, start - end, i["build"]
-	return start, end
+	return start, end, indel
+
+def report_error(mapped, orig, pos_type, direction, k, v):
+	if (int(mapped) != orig):
+		print "%2s Remap %5s Fail - %10s %10s - %10s - %s" % (k+1, pos_type, mapped, orig, v["old_chrom"], direction) 
+		return 1
+	else:
+		return 0
+
 
 def debug():
 	import csv
-	test_gff = csv.DictReader(open("test/test_coords.txt"), delimiter="\t")
+	test_gff = csv.DictReader(open("test/test_coords2.ws75.ws76.txt"), delimiter="\t")
+	fail_count = 0
 	for k,v in enumerate(test_gff):
-		if k < 10:
-			#print k,v[0], v[1], v[5]
+		#print k,v[0], v[1], v[5]
 
-			# Map Forward
-			start, end = remap_coords("C. elegans", 220, 235, v["old_chrom"], int(v["old_start"]), int(v["old_end"]))
-			if (int(v["new_start"]) != start):
-				print "Remap Start Fail - forward %s - %s" % (v["new_start"], start)
-			
-			# Map Backwards
-			start, end = remap_coords("C. elegans", 235, 220, v["old_chrom"], int(v["new_start"]), int(v["new_end"]))
-			if (int(v["old_start"]) != start):
-				print "Remap Start Fail - reverse %s - %s" % (v["new_start"], start)
+		# Forward
+		start, end, indel = remap_coords("C. elegans", 75, 76, v["old_chrom"], int(v["old_start"]), int(v["old_end"]))
+		fail_count += report_error(v["new_start"],start, "start", "Forward", k,v)
+		fail_count += report_error(v["new_end"],end, "end", "Forward", k,v)
+
+		# Backwards
+		start, end, indel = remap_coords("C. elegans", 76, 75, v["old_chrom"], int(v["new_start"]), int(v["new_end"]))
+		fail_count += report_error(v["old_start"],start, "start", "Reverse", k, v)
+		fail_count += report_error(v["old_end"],end, "end", "Reverse", k, v)
+
+	print "Total Failures: %s / %s" % (fail_count, k)
 
 			#print "End remap failed: %s - %s" % (v["old_end"], end)
-
-			
-
 
 debug()
 
