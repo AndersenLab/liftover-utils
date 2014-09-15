@@ -1,45 +1,27 @@
+"""
+Usage:
+  liftover.py <file> <release1> <release2> (bcf|vcf|gff)
+  liftover.py <file> <release1> <release2> <chrom_col> <start_pos_column> [<end_pos_column>] [options]
+
+Options:
+  -h --help     Show this screen.
+  --delim=<delim>  File Delimiter; Default is a tab [default: TAB].
+
+"""
+
+
 # Liftover 
 import sys, os
 import tempfile
 import subprocess
 from subprocess import *
+from docopt import docopt
 
-# Check to see if CHROM DIFFs are available.
-if os.path.isfile("remap_gff_between_releases.pl") == False:
-    os.system("wget ftp://ftp.sanger.ac.uk/pub2/wormbase/software/Remap-between-versions/remap.tar.bz2 && gunzip -f remap.tar.bz2 && tar -xf remap.tar")
-    os.system("mv Remap-for-other-groups/remap_gff_between_releases.pl remap_gff_between_releases.pl")
-    os.system("mv Remap-for-other-groups/CHROMOSOME_DIFFERENCES/ CHROMOSOME_DIFFERENCES/")
-    os.system("rm -f -r Remap-for-other-groups/")
-    os.remove("remap.tar")
+if __name__ == '__main__':
+    # Fetch Arguments
+    arguments = docopt(__doc__, version='Liftover Utilities 1.0')
 
-if len(sys.argv) == 1:
-    print """
-
-        usage:
-
-            liftover.py <file> <release1> <release2> <chrom_col> <pos_start_column> [pos_end_column]
-
-            OR
-
-            liftover.py <file> <release1> <release2> {BCF|VCF|GFF} 
-
-        Assumes '+' strandedness
-
-    """
-elif len(sys.argv) == 5:
-    if (sys.argv[4] in ["BCF", "VCF", "GFF"]):
-        vcf = True
-        chrom_col, start_col, end_col = 0, 1, 1
-        delim = "\t"
-        os.system("bcftools query -f '%%CHROM\t%%POS\n' %s > bcf_pos.txt" % sys.argv[1])
-        variant_positions = file("bcf_pos.txt",'r')
-    else:
-        raise Exception("You must specify a valid file type: VCF or GFF.")
-        
-else:
-    pass
-
-
+# Pipeing function
 def pipe_out(line):
     try:
         sys.stdout.write(line + "\n")
@@ -53,15 +35,46 @@ def pipe_out(line):
         except IOError:
             pass
 
+
+# Check to see if CHROM DIFFs are available.
+if os.path.isfile("remap_gff_between_releases.pl") == False:
+    os.system("wget ftp://ftp.sanger.ac.uk/pub2/wormbase/software/Remap-between-versions/remap.tar.bz2 && gunzip -f remap.tar.bz2 && tar -xf remap.tar")
+    os.system("mv Remap-for-other-groups/remap_gff_between_releases.pl remap_gff_between_releases.pl")
+    os.system("mv Remap-for-other-groups/CHROMOSOME_DIFFERENCES/ CHROMOSOME_DIFFERENCES/")
+    os.system("rm -f -r Remap-for-other-groups/")
+    os.remove("remap.tar")
+
+
+# Define some necessary variables.
+release1, release2 = arguments["<release1>"], arguments["<release2>"]
 gff_temp = tempfile.NamedTemporaryFile().name
 gff_liftover = tempfile.NamedTemporaryFile().name
 gff = file(gff_temp, 'w+')
-release1, release2 = sys.argv[2:4]
+if arguments["--delim"] == "TAB":
+   arguments["--delim"] = "\t" 
+
+#
+# BCF / VCF
+#
+vcf = any([arguments["vcf"],arguments["bcf"]])
+if vcf:
+    chrom_col, start_col, end_col = 0, 1, 1
+    delim = "\t"
+    bcf_pos = tempfile.NamedTemporaryFile().name
+    os.system("bcftools query -f '%%CHROM\t%%POS\n' %s > %s" % (sys.argv[1], bcf_pos))
+    variant_positions = file(bcf_pos,'r')
+else:
+    variant_positions = file(arguments["<file>"],'r')
+    chrom_col, start_col = int(arguments["<chrom_col>"])-1, int(arguments["<start_pos_column>"])-1
+    if arguments["<end_pos_column>"] is not None:
+        end_col = int(arguments["<end_pos_column>"])-1
+    else:
+        end_col = int(arguments["<start_pos_column>"])-1
 
 
 for l in variant_positions.xreadlines():
-    if l.startswith("#") == False:
-        l = l.replace("\n","").split(delim)
+    l = l.replace("\n","").split(arguments["--delim"])
+    if l[0].startswith("#") == False and len(l) >= 2:
         if l[0].lower() == "chrm":
             l[0] = "CHROMOSOME_MtDNA"
         # Write out the coordinates in temporary gff file.
@@ -72,22 +85,28 @@ gff.close()
 
 
 # Generate Liftover Coordinates
-remap_command = "perl remap_gff_between_releases.pl -gff=%s -release1=%s -release2=%s -output=%s" % (gff_temp, release1, release2, gff_liftover)
+if arguments["<release1>"] < arguments["<release2>"]:
+    perl_script = "remap_gff_between_releases.pl"
+else:
+    perl_script = "remap_gff_between_releases.pl"
+    #perl_script = "unmap_gff_between_releases.pl"
+    #release1, release2 = release2, release1
+
+remap_command = "perl %s -gff=%s -release1=%s -release2=%s -output=%s" % (perl_script, gff_temp, release1, release2, gff_liftover)
 subprocess.check_output(remap_command, shell=True)
 
 gff_liftover = file(gff_liftover, 'r')
 
 # Replace original coordinates
 if vcf == True:
-    gff = file(gff_temp, 'r')
-    proc = Popen("bcftools view %s" % sys.argv[1], stdout=PIPE, stdin=PIPE, shell=True)
+    proc = Popen("bcftools view %s" % arguments["<file>"], stdout=PIPE, stdin=PIPE, shell=True)
     for line in proc.stdout:
         line = line.replace("\n", "")
-        if line.startswith("#"):
+        if line.startswith("#") == True:
             pipe_out(line)
         else:
             # Add checks
-            l = gff_liftover.readline().split("\t")
+            l = gff_liftover.readline().replace("\n","").split("\t")
             pos_orig = l[9]
             pos_new = l[3]
             line = line.split("\t")
@@ -96,6 +115,32 @@ if vcf == True:
             else:
                 line[1] = pos_new
                 pipe_out('\t'.join(line))
+else:
+    orig_file = file(arguments["<file>"], 'r')
+    #proc = Popen("cat %s" % arguments["<file>"], stdout=PIPE, stdin=PIPE, shell=True)
+    for line in orig_file.xreadlines():
+        line = line.replace("\n", "")
+        if line.startswith("#") == True or line.startswith(">") == True:
+            pipe_out(line)
+        else:
+            # Add checks
+            l = gff_liftover.readline().split(arguments["--delim"])
+            # Ensure this isn't some strange line...
+            if len(l) >= 2:
+                pos_orig = l[9]
+                pos_new = l[3]
+                pos_end_orig = l[10]
+                pos_end_new = l[4]
+                line = line.split("\t")
+                if line[start_col] != pos_orig:
+                    raise Exception("Coordinates Off")
+                else:
+                    line[start_col] = pos_new
+                    line[end_col] = pos_end_new
+                    pipe_out('\t'.join(line))
+            else:
+                pipe_out(line)
+
 
 
 
