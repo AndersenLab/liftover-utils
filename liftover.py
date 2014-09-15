@@ -1,105 +1,106 @@
-from peewee import * 
+# Liftover 
+import sys, os
+import tempfile
+import subprocess
+from subprocess import *
 
-db = SqliteDatabase('chrom_diff.db')
-db.connect()
+# Check to see if CHROM DIFFs are available.
+if os.path.isfile("remap_gff_between_releases.pl") == False:
+    os.system("wget ftp://ftp.sanger.ac.uk/pub2/wormbase/software/Remap-between-versions/remap.tar.bz2 && gunzip -f remap.tar.bz2 && tar -xf remap.tar")
+    os.system("mv Remap-for-other-groups/remap_gff_between_releases.pl remap_gff_between_releases.pl")
+    os.system("mv Remap-for-other-groups/CHROMOSOME_DIFFERENCES/ CHROMOSOME_DIFFERENCES/")
+    os.system("rm -f -r Remap-for-other-groups/")
+    os.remove("remap.tar")
 
-# Define Classes
-class BaseModel(Model):
-    class Meta:
-        database = db
+if len(sys.argv) == 1:
+    print """
 
-class liftover(BaseModel):
-    build = IntegerField()
-    organism = CharField()
-    chromosome = CharField()
-    mismatch_start1 = IntegerField()
-    mismatch_end1 = IntegerField()
-    length1 = IntegerField()
-    mismatch_start2 = IntegerField()
-    mismatch_end2 = IntegerField()
-    length2 = IntegerField()
-    flipped = BooleanField()
+        usage:
 
+            liftover.py <file> <release1> <release2> <chrom_col> <pos_start_column> [pos_end_column]
 
+            OR
 
-# Remap Coordinates
-def shift_pos(pos, pos_type, mis_start1, mis_end1, length1, mis_start2, mis_end2, length2, shift_direction):
-	# Shift Right if beyond end position
-	if ((length1 > 0 and pos >= mis_end1) or
-		(length1 == 0 and pos > mis_end1)):
-		return pos + ((length2 - length1) * shift_direction)
-	elif (pos >= mis_start1):
-	    # within a changed segment; if the position within the original segment
-	    # maps to beyond the end of the replacement segment, then this position no
-	    # longer exists, in which case we barf
-	    #print pos - mis_start1, length2
-	    if (pos - mis_start1 + 1 > length2): 
-	    	print "INVOKED"
-	    	#return pos + ((length2 - length1) * shift_direction)
-	    	return (mis_start2 + (length2*shift_direction))
-	    else:
-	    	return pos
-	else:
-		return pos
+            liftover.py <file> <release1> <release2> {BCF|VCF|GFF} 
 
-def remap_coords(organism, release1, release2, chromosome, start, end = None):
+        Assumes '+' strandedness
 
-	# Determine direction
-	if (release1 > release2):
-		# Reverse liftover
-		liftover_direction = liftover.build.desc()
-		release1, release2 = release2, release1
-		shift_direction = -1
-	else:
-		# Forward liftover
-		liftover_direction = liftover.build.asc()
-		shift_direction = 1
-
-	# Read Mapping Data
-	mapping_coords = liftover.select().where(liftover.build >= release1, liftover.build <= release2, liftover.chromosome==chromosome).order_by(liftover_direction).dicts()
-	for i in mapping_coords:
-		
-		cur_length = end - start
-
-		start = shift_pos(start, "start", i["mismatch_start1"], i["mismatch_end1"], i["length1"], i["mismatch_start2"], i["mismatch_end2"],  i["length2"], shift_direction)
-		end = shift_pos(end, "end", i["mismatch_start1"], i["mismatch_end1"], i["length1"], i["mismatch_start2"], i["mismatch_end2"],  i["length2"], shift_direction)
+    """
+elif len(sys.argv) == 5:
+    if (sys.argv[4] in ["BCF", "VCF", "GFF"]):
+        vcf = True
+        chrom_col, start_col, end_col = 0, 1, 1
+        delim = "\t"
+        os.system("bcftools query -f '%%CHROM\t%%POS\n' %s > bcf_pos.txt" % sys.argv[1])
+        variant_positions = file("bcf_pos.txt",'r')
+    else:
+        raise Exception("You must specify a valid file type: VCF or GFF.")
+        
+else:
+    pass
 
 
-		indel = (cur_length,(end-start))
+def pipe_out(line):
+    try:
+        sys.stdout.write(line + "\n")
+    except IOError:
+        try:
+            sys.stdout.close()
+        except IOError:
+            pass
+        try:
+            sys.stderr.close()
+        except IOError:
+            pass
 
-		#print start, end, start - end, i["build"]
-	return start, end, indel
-
-def report_error(mapped, orig, pos_type, direction, k, v):
-	if (int(mapped) != orig):
-		print "%2s Remap %5s Fail - %10s %10s - %10s - %s" % (k+1, pos_type, mapped, orig, v["old_chrom"], direction) 
-		return 1
-	else:
-		return 0
+gff_temp = tempfile.NamedTemporaryFile().name
+gff_liftover = tempfile.NamedTemporaryFile().name
+gff = file(gff_temp, 'w+')
+release1, release2 = sys.argv[2:4]
 
 
-def debug():
-	import csv
-	test_gff = csv.DictReader(open("test/test_coords2.ws75.ws76.txt"), delimiter="\t")
-	fail_count = 0
-	for k,v in enumerate(test_gff):
-		#print k,v[0], v[1], v[5]
+for l in variant_positions.xreadlines():
+    if l.startswith("#") == False:
+        l = l.replace("\n","").split(delim)
+        if l[0].lower() == "chrm":
+            l[0] = "CHROMOSOME_MtDNA"
+        # Write out the coordinates in temporary gff file.
+        line_out = "%s\t.\t.\t%s\t%s\t.\t+\t.\t%s\t%s\t%s\n" % tuple([l[chrom_col], l[start_col], l[end_col]]*2)
+        gff.write(line_out)
 
-		# Forward
-		start, end, indel = remap_coords("C. elegans", 75, 76, v["old_chrom"], int(v["old_start"]), int(v["old_end"]))
-		fail_count += report_error(v["new_start"],start, "start", "Forward", k,v)
-		fail_count += report_error(v["new_end"],end, "end", "Forward", k,v)
+gff.close()
 
-		# Backwards
-		start, end, indel = remap_coords("C. elegans", 76, 75, v["old_chrom"], int(v["new_start"]), int(v["new_end"]))
-		fail_count += report_error(v["old_start"],start, "start", "Reverse", k, v)
-		fail_count += report_error(v["old_end"],end, "end", "Reverse", k, v)
 
-	print "Total Failures: %s / %s" % (fail_count, k)
+# Generate Liftover Coordinates
+remap_command = "perl remap_gff_between_releases.pl -gff=%s -release1=%s -release2=%s -output=%s" % (gff_temp, release1, release2, gff_liftover)
+subprocess.check_output(remap_command, shell=True)
 
-			#print "End remap failed: %s - %s" % (v["old_end"], end)
+gff_liftover = file(gff_liftover, 'r')
 
-debug()
+# Replace original coordinates
+if vcf == True:
+    gff = file(gff_temp, 'r')
+    proc = Popen("bcftools view %s" % sys.argv[1], stdout=PIPE, stdin=PIPE, shell=True)
+    for line in proc.stdout:
+        line = line.replace("\n", "")
+        if line.startswith("#"):
+            pipe_out(line)
+        else:
+            # Add checks
+            l = gff_liftover.readline().split("\t")
+            pos_orig = l[9]
+            pos_new = l[3]
+            line = line.split("\t")
+            if line[1] != pos_orig:
+                raise Exception("Coordinates Off")
+            else:
+                line[1] = pos_new
+                pipe_out('\t'.join(line))
 
-remap_coords("C. elegans", 220, 235,"CHROMOSOME_IV", 9403845, 9403855)
-remap_coords("C. elegans", 220, 235,"CHROMOSOME_IV", 9403845, 9403855)
+
+
+
+
+
+
+
