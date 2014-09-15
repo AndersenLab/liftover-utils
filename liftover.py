@@ -1,6 +1,6 @@
 """
 Usage:
-  liftover.py <file> <release1> <release2> (bcf|vcf|gff)
+  liftover.py <file> <release1> <release2> (bcf|vcf|gff|bed)
   liftover.py <file> <release1> <release2> <chrom_col> <start_pos_column> [<end_pos_column>] [options]
 
 Options:
@@ -13,6 +13,7 @@ Options:
 # Liftover 
 import sys, os
 import tempfile
+import gzip
 import subprocess
 from subprocess import *
 from docopt import docopt
@@ -35,6 +36,15 @@ def pipe_out(line):
         except IOError:
             pass
 
+
+def unzip_gz(filename):
+    # For some files, unzip first as temp files.
+    if (filename.endswith(".gz")):
+        tmp_gz = tempfile.NamedTemporaryFile().name
+        os.system("gunzip -c %s > %s" % (filename, tmp_gz))
+        return tmp_gz
+    else:
+        return filename
 
 # Check to see if CHROM DIFFs are available.
 if os.path.isfile("remap_gff_between_releases.pl") == False:
@@ -63,6 +73,16 @@ if vcf:
     bcf_pos = tempfile.NamedTemporaryFile().name
     os.system("bcftools query -f '%%CHROM\t%%POS\n' %s > %s" % (sys.argv[1], bcf_pos))
     variant_positions = file(bcf_pos,'r')
+elif arguments["gff"]:
+    chrom_col, start_col, end_col = 0, 3, 4
+    delim = "\t"
+    arguments["<file>"] = unzip_gz(arguments["<file>"])
+    variant_positions = file(arguments["<file>"],'r')
+elif arguments["bed"]:
+    chrom_col, start_col, end_col = 0, 1, 2
+    delim = "\t"
+    arguments["<file>"] = unzip_gz(arguments["<file>"])
+    variant_positions = file(arguments["<file>"],'r')
 else:
     variant_positions = file(arguments["<file>"],'r')
     chrom_col, start_col = int(arguments["<chrom_col>"])-1, int(arguments["<start_pos_column>"])-1
@@ -117,7 +137,6 @@ if vcf == True:
                 pipe_out('\t'.join(line))
 else:
     orig_file = file(arguments["<file>"], 'r')
-    #proc = Popen("cat %s" % arguments["<file>"], stdout=PIPE, stdin=PIPE, shell=True)
     for line in orig_file.xreadlines():
         line = line.replace("\n", "")
         if line.startswith("#") == True or line.startswith(">") == True:
