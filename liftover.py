@@ -105,12 +105,13 @@ gff.close()
 
 
 # Generate Liftover Coordinates
-if arguments["<release1>"] < arguments["<release2>"]:
-    perl_script = "remap_gff_between_releases.pl"
-else:
-    perl_script = "remap_gff_between_releases.pl"
-    #perl_script = "unmap_gff_between_releases.pl"
-    #release1, release2 = release2, release1
+perl_script = "remap_gff_between_releases.pl"
+
+release1 = release1.upper().replace("WS","")
+release2 = release2.upper().replace("WS","")
+
+if int(release2) < int(release1):
+    raise Exception("Can only lift forward")
 
 remap_command = "perl %s -gff=%s -release1=%s -release2=%s -output=%s" % (perl_script, gff_temp, release1, release2, gff_liftover)
 subprocess.check_output(remap_command, shell=True)
@@ -121,6 +122,7 @@ gff_liftover = file(gff_liftover, 'r')
 if vcf == True:
     proc = Popen("bcftools view %s" % arguments["<file>"], stdout=PIPE, stdin=PIPE, shell=True)
     for line in proc.stdout:
+        print line
         line = line.replace("\n", "")
         if line.startswith("#") == True:
             pipe_out(line)
