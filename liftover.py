@@ -85,9 +85,9 @@ elif arguments["bed"]:
     arguments["<file>"] = unzip_gz(arguments["<file>"])
     variant_positions = file(arguments["<file>"],'r')
 elif arguments["refflat"]:
-    refflat_temp = tempfile.NamedTemporaryFile().name
+    arguments["<file>"] = unzip_gz(arguments["<file>"])
     # Process refflat file for liftover.
-    with open(refflat_temp, "w+") as temp_ref:
+    with open(gff_temp, "w+") as temp_ref:
         with open(arguments["<file>"]) as f:
             for n, l in enumerate(f):
                 l = l.strip().split("\t")
@@ -107,11 +107,11 @@ elif arguments["refflat"]:
                 temp_ref.write("{chrom}\t{cdsStart}\t{cdsEnd}\tcds\t{n}\n".format(**locals()))
                 exons = zip(exonStarts, exonEnds)
                 for exonStart, exonEnd in exons:
-                    temp_ref.write("{chrom}\t{exonStart}\t{exonEnd}\texon\t{n}\n".format(**locals()))
+                    gff.write("{chrom}\t{exonStart}\t{exonEnd}\texon\t{n}\n".format(**locals()))
     delim = "\t"
     chrom_col, start_col, end_col  = 0, 1, 2
     #arguments["<file>"] = "temp.txt"
-    variant_positions = file(refflat_temp,"r")
+    variant_positions = file(gff_temp,"r")
 else:
     variant_positions = file(arguments["<file>"],'r')
     chrom_col, start_col = int(arguments["<chrom_col>"])-1, int(arguments["<start_pos_column>"])-1
@@ -169,7 +169,7 @@ elif arguments["refflat"]:
 
     # Organize liftover positions
     org_pos = dict()
-    new_pos = [x.split("\t") for x in open(refflat_temp, "r").read().strip().split("\n")]
+    new_pos = [x.split("\t") for x in open(gff_temp, "r").read().strip().split("\n")]
     for i in new_pos:
         i[4] = int(i[4])
         if i[4] not in org_pos:
@@ -183,17 +183,16 @@ elif arguments["refflat"]:
                 org_pos[i[4]]["exon"] = {}
                 org_pos[i[4]]["exon"]["start"] = []
                 org_pos[i[4]]["exon"]["end"] = []
-            else:
-                org_pos[i[4]]["exon"]["start"].extend([i[1]])
-                org_pos[i[4]]["exon"]["end"].extend([i[2]])
+            org_pos[i[4]]["exon"]["start"].extend([i[1]])
+            org_pos[i[4]]["exon"]["end"].extend([i[2]])
     for n,l in enumerate(orig_file.xreadlines()):
             l = l.strip().split("\t")
             l[4] = org_pos[n]["tx"][0]
             l[5] = org_pos[n]["tx"][1]
-            l[6] = org_pos[n]["cds"][1]
+            l[6] = org_pos[n]["cds"][0]
             l[7] = org_pos[n]["cds"][1]
-            l[9] = ','.join(org_pos[n]["exon"]["start"])
-            l[10] = ','.join(org_pos[n]["exon"]["end"])
+            l[9] = ','.join(org_pos[n]["exon"]["start"]) + ","
+            l[10] = ','.join(org_pos[n]["exon"]["end"]) + ","
             pipe_out('\t'.join(l))
 
 else:
