@@ -1,6 +1,6 @@
 """
 Usage:
-  liftover.py <file> <release1> <release2> (bcf|vcf|gff|bed)
+  liftover.py <file> <release1> <release2> (bcf|vcf|gff|bed|refflat)
   liftover.py <file> <release1> <release2> <chrom_col> <start_pos_column> [<end_pos_column>] [options]
 
 Options:
@@ -16,6 +16,7 @@ import tempfile
 import gzip
 import subprocess
 from subprocess import *
+from pprint import pprint as pp
 from docopt import docopt
 
 if __name__ == '__main__':
@@ -83,6 +84,34 @@ elif arguments["bed"]:
     delim = "\t"
     arguments["<file>"] = unzip_gz(arguments["<file>"])
     variant_positions = file(arguments["<file>"],'r')
+elif arguments["refflat"]:
+    refflat_temp = tempfile.NamedTemporaryFile().name
+    # Process refflat file for liftover.
+    with open(refflat_temp, "w+") as temp_ref:
+        with open(arguments["<file>"]) as f:
+            for n, l in enumerate(f):
+                l = l.strip().split("\t")
+                geneName = l[0]
+                name = l[1]
+                chrom = l[2]
+                strand = l[3]
+                txStart = l[4]
+                txEnd = l[5]
+                cdsStart = l[6]
+                cdsEnd = l[7]
+                exonCount = l[8]
+                exonStarts = l[9].strip(",").split(",")
+                exonEnds = l[10].strip(",").split(",")
+                # Write a line for starts and ends
+                temp_ref.write("{chrom}\t{txStart}\t{txEnd}\ttx\t{n}\n".format(**locals()))
+                temp_ref.write("{chrom}\t{cdsStart}\t{cdsEnd}\tcds\t{n}\n".format(**locals()))
+                exons = zip(exonStarts, exonEnds)
+                for exonStart, exonEnd in exons:
+                    temp_ref.write("{chrom}\t{exonStart}\t{exonEnd}\texon\t{n}\n".format(**locals()))
+    delim = "\t"
+    chrom_col, start_col, end_col  = 0, 1, 2
+    #arguments["<file>"] = "temp.txt"
+    variant_positions = file(refflat_temp,"r")
 else:
     variant_positions = file(arguments["<file>"],'r')
     chrom_col, start_col = int(arguments["<chrom_col>"])-1, int(arguments["<start_pos_column>"])-1
@@ -90,8 +119,6 @@ else:
         end_col = int(arguments["<end_pos_column>"])-1
     else:
         end_col = int(arguments["<start_pos_column>"])-1
-
-
 for l in variant_positions.xreadlines():
     l = l.replace("\n","").split(arguments["--delim"])
     if l[0].startswith("#") == False and len(l) >= 2:
@@ -137,6 +164,38 @@ if vcf == True:
             else:
                 line[1] = pos_new
                 pipe_out('\t'.join(line))
+elif arguments["refflat"]:
+    orig_file = file(arguments["<file>"], 'r')
+
+    # Organize liftover positions
+    org_pos = dict()
+    new_pos = [x.split("\t") for x in open(refflat_temp, "r").read().strip().split("\n")]
+    for i in new_pos:
+        i[4] = int(i[4])
+        if i[4] not in org_pos:
+            org_pos[i[4]] = {}
+        if i[3] == "tx":
+            org_pos[i[4]]["tx"] = [i[1], i[2]]
+        elif i[3] == "cds":
+            org_pos[i[4]]["cds"] = [i[1], i[2]]
+        elif i[3] == "exon":
+            if "exon" not in org_pos[i[4]]:
+                org_pos[i[4]]["exon"] = {}
+                org_pos[i[4]]["exon"]["start"] = []
+                org_pos[i[4]]["exon"]["end"] = []
+            else:
+                org_pos[i[4]]["exon"]["start"].extend([i[1]])
+                org_pos[i[4]]["exon"]["end"].extend([i[2]])
+    for n,l in enumerate(orig_file.xreadlines()):
+            l = l.strip().split("\t")
+            l[4] = org_pos[n]["tx"][0]
+            l[5] = org_pos[n]["tx"][1]
+            l[6] = org_pos[n]["cds"][1]
+            l[7] = org_pos[n]["cds"][1]
+            l[9] = ','.join(org_pos[n]["exon"]["start"])
+            l[10] = ','.join(org_pos[n]["exon"]["end"])
+            pipe_out('\t'.join(l))
+
 else:
     orig_file = file(arguments["<file>"], 'r')
     for line in orig_file.xreadlines():
@@ -153,6 +212,7 @@ else:
                 pos_end_orig = l[10]
                 pos_end_new = l[4]
                 line = line.split("\t")
+                print line
                 if line[start_col] != pos_orig:
                     raise Exception("Coordinates Off")
                 else:
