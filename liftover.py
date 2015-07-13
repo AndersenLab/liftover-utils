@@ -58,9 +58,10 @@ if os.path.isfile("remap_gff_between_releases.pl") == False:
 
 # Define some necessary variables.
 release1, release2 = arguments["<release1>"], arguments["<release2>"]
+#gff_temp = tempfile.NamedTemporaryFile().name
 gff_temp = tempfile.NamedTemporaryFile().name
-gff_liftover = tempfile.NamedTemporaryFile().name
-gff = file(gff_temp, 'w+')
+gff_liftover_name = tempfile.NamedTemporaryFile().name
+gff = file(gff_temp, 'w')
 if arguments["--delim"] == "TAB":
    arguments["--delim"] = "\t" 
 
@@ -86,8 +87,9 @@ elif arguments["bed"]:
     variant_positions = file(arguments["<file>"],'r')
 elif arguments["refflat"]:
     arguments["<file>"] = unzip_gz(arguments["<file>"])
+    refflat = tempfile.NamedTemporaryFile().name
     # Process refflat file for liftover.
-    with open(gff_temp, "w+") as temp_ref:
+    with open(refflat, "w+") as ref:
         with open(arguments["<file>"]) as f:
             for n, l in enumerate(f):
                 l = l.strip().split("\t")
@@ -103,15 +105,15 @@ elif arguments["refflat"]:
                 exonStarts = l[9].strip(",").split(",")
                 exonEnds = l[10].strip(",").split(",")
                 # Write a line for starts and ends
-                temp_ref.write("{chrom}\t{txStart}\t{txEnd}\ttx\t{n}\n".format(**locals()))
-                temp_ref.write("{chrom}\t{cdsStart}\t{cdsEnd}\tcds\t{n}\n".format(**locals()))
+                ref.write("{chrom}\t{txStart}\t{txEnd}\ttx\t{n}\n".format(**locals()))
+                ref.write("{chrom}\t{cdsStart}\t{cdsEnd}\tcds\t{n}\n".format(**locals()))
                 exons = zip(exonStarts, exonEnds)
                 for exonStart, exonEnd in exons:
-                    gff.write("{chrom}\t{exonStart}\t{exonEnd}\texon\t{n}\n".format(**locals()))
+                    ref.write("{chrom}\t{exonStart}\t{exonEnd}\texon\t{n}\n".format(**locals()))
     delim = "\t"
     chrom_col, start_col, end_col  = 0, 1, 2
     #arguments["<file>"] = "temp.txt"
-    variant_positions = file(gff_temp,"r")
+    variant_positions = file(refflat,"r")
 else:
     variant_positions = file(arguments["<file>"],'r')
     chrom_col, start_col = int(arguments["<chrom_col>"])-1, int(arguments["<start_pos_column>"])-1
@@ -140,10 +142,10 @@ release2 = release2.upper().replace("WS","")
 if int(release2) < int(release1):
     raise Exception("Can only lift forward")
 
-remap_command = "perl %s -gff=%s -release1=%s -release2=%s -output=%s" % (perl_script, gff_temp, release1, release2, gff_liftover)
+remap_command = "perl %s -gff=%s -release1=%s -release2=%s -output=%s" % (perl_script, gff_temp, release1, release2, gff_liftover_name)
 subprocess.check_output(remap_command, shell=True)
 
-gff_liftover = file(gff_liftover, 'r')
+gff_liftover = file(gff_liftover_name, 'r')
 
 # Replace original coordinates
 if vcf == True:
@@ -169,22 +171,25 @@ elif arguments["refflat"]:
 
     # Organize liftover positions
     org_pos = dict()
-    new_pos = [x.split("\t") for x in open(gff_temp, "r").read().strip().split("\n")]
-    for i in new_pos:
-        i[4] = int(i[4])
-        if i[4] not in org_pos:
-            org_pos[i[4]] = {}
-        if i[3] == "tx":
-            org_pos[i[4]]["tx"] = [i[1], i[2]]
-        elif i[3] == "cds":
-            org_pos[i[4]]["cds"] = [i[1], i[2]]
-        elif i[3] == "exon":
-            if "exon" not in org_pos[i[4]]:
-                org_pos[i[4]]["exon"] = {}
-                org_pos[i[4]]["exon"]["start"] = []
-                org_pos[i[4]]["exon"]["end"] = []
-            org_pos[i[4]]["exon"]["start"].extend([i[1]])
-            org_pos[i[4]]["exon"]["end"].extend([i[2]])
+    new_pos = [x.split("\t") for x in gff_liftover.read().strip().split("\n")]
+    proc = Popen(["paste", gff_liftover_name, refflat ], stdout=PIPE, stderr=PIPE)
+    for i in proc.stdout:
+        i = i.strip().split("\t")
+        n = int(i[15])
+        line_type = i[14]
+        if n not in org_pos:
+            org_pos[n] = {}
+        if line_type == "tx":
+            org_pos[n]["tx"] = [i[3], i[4]]
+        elif line_type == "cds":
+            org_pos[n]["cds"] = [i[3], i[4]]
+        elif line_type == "exon":
+            if "exon" not in org_pos[n]:
+                org_pos[n]["exon"] = {}
+                org_pos[n]["exon"]["start"] = []
+                org_pos[n]["exon"]["end"] = []
+            org_pos[n]["exon"]["start"].extend([i[3]])
+            org_pos[n]["exon"]["end"].extend([i[4]])
     for n,l in enumerate(orig_file.xreadlines()):
             l = l.strip().split("\t")
             l[4] = org_pos[n]["tx"][0]
@@ -211,7 +216,6 @@ else:
                 pos_end_orig = l[10]
                 pos_end_new = l[4]
                 line = line.split("\t")
-                print line
                 if line[start_col] != pos_orig:
                     raise Exception("Coordinates Off")
                 else:
