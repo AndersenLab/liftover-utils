@@ -18,3 +18,8 @@ Makes use of `remap_gff_between_releases.pl` by Gary Williams.
 	  -h --help     Show this screen.
 	  --delim=<delim>  File Delimiter; Default is a tab [default: TAB].
 
+## Installation
+
+```
+pip install https://github.com/AndersenLab/liftover-utils/releases/download/v0.1/liftover-utils.zip
+```
