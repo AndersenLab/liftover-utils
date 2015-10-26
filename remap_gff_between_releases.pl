@@ -15,6 +15,8 @@ use strict;
 use Getopt::Long;
 use Carp;
 use warnings;
+use Cwd 'abs_path';
+use File::Basename qw( dirname );
 
 
 ######################################
@@ -142,7 +144,7 @@ sub read_mapping_data {
                                                                                                                                                             
   foreach my $release (($release1+1) .. $release2) {
     my %chroms;
-    my $infile = "CHROMOSOME_DIFFERENCES/sequence_differences.WS$release";
+    my $infile = dirname(abs_path($0)) . "/CHROMOSOME_DIFFERENCES/sequence_differences.WS$release";
     open (IN, "< $infile") || die "Can't open $infile\n";
     my $chrom;
     while (my $line = <IN>) {
