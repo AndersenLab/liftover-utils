@@ -21,5 +21,5 @@ Makes use of `remap_gff_between_releases.pl` by Gary Williams.
 ## Installation
 
 ```
-pip install https://github.com/AndersenLab/liftover-utils/releases/download/v0.1/liftover-utils.zip
+pip install https://github.com/AndersenLab/liftover-utils/archive/v0.1.tar.gz
 ```
